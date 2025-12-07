@@ -10,6 +10,9 @@ class ApiService {
     required File? imageFile,
     required String blurType,
     Uint8List? maskBytes,
+    int blurStrength = 30,
+    String blurShape = 'rect',
+    String blurStyle = 'smooth',
   }) async {
     var request = http.MultipartRequest('POST', Uri.parse(AppConstants.blurEndpoint));
 
@@ -34,6 +37,9 @@ class ApiService {
 
     // Add fields
     request.fields['blur_type'] = blurType;
+    request.fields['blur_strength'] = blurStrength.toString();
+    request.fields['blur_shape'] = blurShape;
+    request.fields['blur_style'] = blurStyle;
 
     // Add mask if present
     if (maskBytes != null) {

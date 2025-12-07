@@ -28,6 +28,10 @@ class _HomeScreenState extends State<HomeScreen> {
   
   bool _isLoading = false;
   bool _isVideo = false;
+  
+  double _blurStrength = 30.0;
+  String _blurShape = 'rect'; // 'rect', 'oval', 'trace'
+  String _blurStyle = 'smooth'; // 'smooth', 'pixelate'
 
   Future<void> _pickImage() async {
     final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
@@ -76,6 +80,9 @@ class _HomeScreenState extends State<HomeScreen> {
         imageFile: _image,
         blurType: blurType,
         maskBytes: _maskBytes,
+        blurStrength: _blurStrength.round(),
+        blurShape: _blurShape,
+        blurStyle: _blurStyle,
       );
 
       if (bytes != null) {
@@ -288,6 +295,59 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           if ((_pickedFile != null || _image != null) && !_isVideo) ...[
             const SizedBox(height: 20),
+            // Blur Settings
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Blur Strength: ${_blurStrength.round()}",
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    activeTrackColor: AppTheme.primary,
+                    inactiveTrackColor: Colors.white10,
+                    thumbColor: Colors.white,
+                    overlayColor: AppTheme.primary.withOpacity(0.2),
+                  ),
+                  child: Slider(
+                    value: _blurStrength,
+                    min: 1,
+                    max: 100,
+                    onChanged: (value) => setState(() => _blurStrength = value),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Text(
+                      "Shape: ",
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(width: 10),
+                    _buildShapeOption("Box", "rect"),
+                    const SizedBox(width: 10),
+                    _buildShapeOption("Oval", "oval"),
+                    const SizedBox(width: 10),
+                    _buildShapeOption("Trace", "trace"),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Text(
+                      "Style: ",
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    const SizedBox(width: 10),
+                    _buildStyleOption("Smooth", "smooth"),
+                    const SizedBox(width: 10),
+                    _buildStyleOption("Pixelate", "pixelate"),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
@@ -312,6 +372,56 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     ).animate().slideY(begin: 1, end: 0, duration: 600.ms, curve: Curves.easeOutExpo);
+  }
+
+  Widget _buildShapeOption(String label, String value) {
+    final isSelected = _blurShape == value;
+    return GestureDetector(
+      onTap: () => setState(() => _blurShape = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primary : Colors.white10,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppTheme.primary : Colors.transparent,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.white60,
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStyleOption(String label, String value) {
+    final isSelected = _blurStyle == value;
+    return GestureDetector(
+      onTap: () => setState(() => _blurStyle = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primary : Colors.white10,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppTheme.primary : Colors.transparent,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.white60,
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildActionButton({

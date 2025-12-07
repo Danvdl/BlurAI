@@ -30,9 +30,8 @@ def apply_gaussian_blur(image_path: Path, output_path: Path, strength: int = 15)
 
 def blur_background(image_path: Path, output_path: Path) -> Path:
     """
-    Blur the background of an image.
-    Currently applies a simple blur to the entire image.
-    TODO: Integrate with SAM2 for proper background segmentation.
+    Blur the background of an image (everything EXCEPT the faces).
+    Uses OpenCV's Haar Cascade for face detection.
     
     Args:
         image_path: Path to the input image
@@ -41,11 +40,74 @@ def blur_background(image_path: Path, output_path: Path) -> Path:
     Returns:
         Path to the processed image
     """
-    # For now, just apply a strong blur to simulate background blur
-    return apply_gaussian_blur(image_path, output_path, strength=20)
+    # Load the image using numpy to handle unicode paths
+    with open(image_path, "rb") as f:
+        file_bytes = np.asarray(bytearray(f.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        # Fallback to simple blur if load fails
+        return apply_gaussian_blur(image_path, output_path, strength=20)
+
+    # Create a blurred version of the entire image
+    blurred_img = cv2.GaussianBlur(img, (0, 0), 20)
+    
+    # Load the cascade
+    cascade_filename = 'haarcascade_frontalface_default.xml'
+    system_cascade_path = Path(cv2.data.haarcascades) / cascade_filename
+    local_cascade_path = Path(cascade_filename)
+    
+    if not local_cascade_path.exists():
+        import shutil
+        shutil.copy(system_cascade_path, local_cascade_path)
+        
+    face_cascade = cv2.CascadeClassifier(str(local_cascade_path))
+    
+    if face_cascade.empty():
+        # Fallback to simple blur if cascade fails
+        cv2.imwrite(str(output_path), blurred_img)
+        return output_path
+    
+    # Detect faces
+    faces = face_cascade.detectMultiScale(
+        cv2.cvtColor(img, cv2.COLOR_BGR2GRAY),
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30)
+    )
+    
+    # For each face, copy the original (sharp) face back onto the blurred image
+    for (x, y, w, h) in faces:
+        # Create an oval mask for the face to blend it smoothly
+        mask = np.zeros((h, w), dtype=np.uint8)
+        center = (w // 2, h // 2)
+        axes = (w // 2, int(h // 1.6))
+        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
+        
+        # Soften the mask
+        mask = cv2.GaussianBlur(mask, (21, 21), 10)
+        mask_3c = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR).astype(np.float32) / 255.0
+        
+        # Extract regions
+        face_region_sharp = img[y:y+h, x:x+w].astype(np.float32)
+        face_region_blurred = blurred_img[y:y+h, x:x+w].astype(np.float32)
+        
+        # Blend: Sharp face where mask is white, blurred background where mask is black
+        blended = (face_region_sharp * mask_3c) + (face_region_blurred * (1.0 - mask_3c))
+        blurred_img[y:y+h, x:x+w] = blended.astype(np.uint8)
+    
+    # Save the result
+    is_success, im_buf_arr = cv2.imencode(".jpg", blurred_img)
+    if is_success:
+        with open(output_path, "wb") as f:
+            im_buf_arr.tofile(f)
+    else:
+        raise RuntimeError("Failed to encode output image")
+        
+    return output_path
 
 
-def blur_faces(image_path: Path, output_path: Path) -> Path:
+def blur_faces(image_path: Path, output_path: Path, strength: int = 30, shape: str = "rect", style: str = "smooth") -> Path:
     """
     Detect and blur faces in an image.
     Uses OpenCV's Haar Cascade for face detection.
@@ -54,20 +116,42 @@ def blur_faces(image_path: Path, output_path: Path) -> Path:
     Args:
         image_path: Path to the input image
         output_path: Path where the processed image will be saved
+        strength: Blur strength (sigma for Gaussian blur or pixel size for pixelation)
+        shape: Shape of the blur ('rect', 'oval', 'trace')
+        style: Style of the blur ('smooth', 'pixelate')
     
     Returns:
         Path to the processed image
     """
-    # Load the image
-    img = cv2.imread(str(image_path))
+    # Load the image using numpy to handle unicode paths
+    # cv2.imread fails with non-ASCII paths on Windows
+    with open(image_path, "rb") as f:
+        file_bytes = np.asarray(bytearray(f.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     
+    if img is None:
+        raise ValueError(f"Failed to load image from {image_path}")
+
     # Convert to RGB (OpenCV uses BGR)
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    # img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # Not needed for detection/blurring logic here
     
     # Load the cascade
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-    )
+    # Handle potential unicode path issues by copying to a local file
+    cascade_filename = 'haarcascade_frontalface_default.xml'
+    system_cascade_path = Path(cv2.data.haarcascades) / cascade_filename
+    local_cascade_path = Path(cascade_filename)
+    
+    if not local_cascade_path.exists():
+        import shutil
+        shutil.copy(system_cascade_path, local_cascade_path)
+        
+    face_cascade = cv2.CascadeClassifier(str(local_cascade_path))
+    
+    if face_cascade.empty():
+        # Try absolute path as fallback
+        face_cascade = cv2.CascadeClassifier(str(system_cascade_path))
+        if face_cascade.empty():
+            raise RuntimeError("Failed to load face cascade classifier")
     
     # Detect faces
     faces = face_cascade.detectMultiScale(
@@ -82,14 +166,98 @@ def blur_faces(image_path: Path, output_path: Path) -> Path:
         # Extract the face region
         face_region = img[y:y+h, x:x+w]
         
-        # Apply Gaussian blur to the face region
-        blurred_face = cv2.GaussianBlur(face_region, (99, 99), 30)
+        # Apply Blur based on style
+        if style == "pixelate":
+            # Pixelate effect
+            # Calculate pixel size based on strength (1-100)
+            # Strength 1 -> 1 block (no change)
+            # Strength 100 -> 20x20 blocks
+            pixel_size = max(1, int(strength / 5))
+            if pixel_size > 1:
+                h_face, w_face = face_region.shape[:2]
+                # Resize down
+                small = cv2.resize(face_region, (max(1, w_face//pixel_size), max(1, h_face//pixel_size)), interpolation=cv2.INTER_LINEAR)
+                # Resize up
+                blurred_face = cv2.resize(small, (w_face, h_face), interpolation=cv2.INTER_NEAREST)
+            else:
+                blurred_face = face_region.copy()
+        else:
+            # Smooth (Gaussian) effect
+            # Map 1-100 strength to 1-100 sigma for stronger blur
+            sigma = max(1, strength)
+            blurred_face = cv2.GaussianBlur(face_region, (0, 0), sigma)
         
-        # Replace the face region with the blurred version
-        img[y:y+h, x:x+w] = blurred_face
+        if shape == "oval":
+            # Create an oval mask
+            mask = np.zeros((h, w), dtype=np.uint8)
+            center = (w // 2, h // 2)
+            axes = (w // 2, int(h // 1.6)) # Slightly taller oval for faces
+            cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
+            
+            # Soften the mask edges for better blending
+            mask = cv2.GaussianBlur(mask, (21, 21), 10)
+            
+            # Convert mask to 3 channels float
+            mask_3c = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR).astype(np.float32) / 255.0
+            
+            face_float = face_region.astype(np.float32)
+            blurred_float = blurred_face.astype(np.float32)
+            
+            # Blend
+            blended = (blurred_float * mask_3c) + (face_float * (1.0 - mask_3c))
+            img[y:y+h, x:x+w] = blended.astype(np.uint8)
+            
+        elif shape == "trace":
+            # Use GrabCut for smart segmentation
+            # 1. Create a mask initialized with zeros (background)
+            mask = np.zeros(face_region.shape[:2], np.uint8)
+            
+            # 2. Initialize mask with an oval as "Probable Foreground"
+            # This tells GrabCut: "The stuff in the middle is likely the face, the corners are likely background"
+            h, w = face_region.shape[:2]
+            center = (w // 2, h // 2)
+            axes = (int(w * 0.4), int(h * 0.5)) # 40% width, 50% height oval
+            cv2.ellipse(mask, center, axes, 0, 0, 360, cv2.GC_PR_FGD, -1)
+            
+            # 3. Run GrabCut
+            bgdModel = np.zeros((1, 65), np.float64)
+            fgdModel = np.zeros((1, 65), np.float64)
+            
+            # We use GC_INIT_WITH_MASK because we set up the mask manually
+            try:
+                cv2.grabCut(face_region, mask, None, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_MASK)
+            except:
+                pass # Fallback to the oval we drew if it fails
+
+            # 4. Extract final mask (Foreground + Probable Foreground)
+            # 0=BGD, 1=FGD, 2=PR_BGD, 3=PR_FGD
+            mask2 = np.where((mask==2)|(mask==0), 0, 1).astype('uint8')
+            
+            # 5. Soften the mask edges significantly
+            mask2 = cv2.GaussianBlur(mask2 * 255, (41, 41), 20)
+            
+            # Convert mask to 3 channels float
+            mask_3c = cv2.cvtColor(mask2, cv2.COLOR_GRAY2BGR).astype(np.float32) / 255.0
+            
+            face_float = face_region.astype(np.float32)
+            blurred_float = blurred_face.astype(np.float32)
+            
+            # Blend
+            blended = (blurred_float * mask_3c) + (face_float * (1.0 - mask_3c))
+            img[y:y+h, x:x+w] = blended.astype(np.uint8)
+
+        else:
+            # Default rectangular blur
+            img[y:y+h, x:x+w] = blurred_face
     
-    # Save the result
-    cv2.imwrite(str(output_path), img)
+    # Save the result using imencode to handle unicode paths
+    is_success, im_buf_arr = cv2.imencode(".jpg", img)
+    if is_success:
+        with open(output_path, "wb") as f:
+            im_buf_arr.tofile(f)
+    else:
+        raise RuntimeError("Failed to encode output image")
+        
     return output_path
 
 
