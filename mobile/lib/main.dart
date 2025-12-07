@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:device_preview/device_preview.dart';
+import 'core/theme.dart';
 import 'screens/home_screen.dart';
 
 void main() {
@@ -21,10 +22,7 @@ class MyApp extends StatelessWidget {
       title: 'BlurAI',
       locale: DevicePreview.locale(context),
       builder: DevicePreview.appBuilder,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-      ),
+      theme: AppTheme.darkTheme,
       home: const HomeScreen(),
     );
   }
