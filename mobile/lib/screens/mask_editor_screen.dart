@@ -51,6 +51,49 @@ class _MaskEditorScreenState extends State<MaskEditorScreen> {
     });
   }
 
+  // We need to capture the size of the drawing area to render the mask correctly
+  Size? _canvasSize;
+
+  Future<void> _saveAndExit() async {
+    if (_canvasSize == null) return;
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    
+    // Draw a black background (transparent in the final mask logic, but let's use white on black for standard masks)
+    // Actually, for a mask: White = Selected (Blur), Black = Protected (Keep).
+    // Or Transparent = Protected, Color = Blur.
+    // Let's draw White strokes on a Black background.
+    
+    final bgPaint = Paint()..color = Colors.black;
+    canvas.drawRect(Offset.zero & _canvasSize!, bgPaint);
+
+    final paint = Paint()
+      ..color = Colors.white
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = _brushSize
+      ..style = PaintingStyle.stroke;
+
+    for (final stroke in _strokes) {
+      if (stroke.isEmpty) continue;
+      final path = Path();
+      path.moveTo(stroke.first.dx, stroke.first.dy);
+      for (int i = 1; i < stroke.length; i++) {
+        path.lineTo(stroke[i].dx, stroke[i].dy);
+      }
+      canvas.drawPath(path, paint);
+    }
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(_canvasSize!.width.toInt(), _canvasSize!.height.toInt());
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+    final pngBytes = byteData!.buffer.asUint8List();
+
+    if (mounted) {
+      Navigator.pop(context, pngBytes);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -63,9 +106,7 @@ class _MaskEditorScreenState extends State<MaskEditorScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.check),
-            onPressed: () {
-              Navigator.pop(context, _strokes);
-            },
+            onPressed: _saveAndExit,
           ),
         ],
       ),
@@ -74,6 +115,7 @@ class _MaskEditorScreenState extends State<MaskEditorScreen> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
+                _canvasSize = Size(constraints.maxWidth, constraints.maxHeight);
                 return Stack(
                   children: [
                     // Background Image
