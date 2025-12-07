@@ -64,8 +64,7 @@ class _MaskEditorScreenState extends State<MaskEditorScreen> {
           IconButton(
             icon: const Icon(Icons.check),
             onPressed: () {
-              // TODO: Return the mask data
-              Navigator.pop(context);
+              Navigator.pop(context, _strokes);
             },
           ),
         ],

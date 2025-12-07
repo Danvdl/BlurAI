@@ -4,10 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
+import 'package:device_preview/device_preview.dart';
 import 'screens/mask_editor_screen.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(
+    DevicePreview(
+      enabled: !kReleaseMode,
+      builder: (context) => const MyApp(), // Wrap your app
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -17,6 +23,8 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'BlurAI',
+      locale: DevicePreview.locale(context),
+      builder: DevicePreview.appBuilder,
       theme: ThemeData(
         primarySwatch: Colors.blue,
         visualDensity: VisualDensity.adaptivePlatformDensity,
@@ -40,6 +48,7 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isLoading = false;
   bool _isVideo = false;
   XFile? _pickedFile; // Store XFile for web compatibility
+  List<List<Offset>>? _mask; // Store the mask strokes
 
   Future<void> _pickImage() async {
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
@@ -50,6 +59,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _image = kIsWeb ? null : File(pickedFile.path);
         _blurredImageUrl = null;
         _isVideo = false;
+        _mask = null;
       });
     }
   }
@@ -184,22 +194,27 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
             if ((_pickedFile != null || _image != null) && !_isVideo) ...[
               IconButton(
-                icon: const Icon(Icons.brush),
-                onPressed: () {
+                icon: Icon(Icons.brush, color: _mask != null ? Colors.red : null),
+                onPressed: () async {
                   if (_pickedFile != null) {
-                    Navigator.push(
+                    final result = await Navigator.push<List<List<Offset>>>(
                       context,
                       MaterialPageRoute(
                         builder: (context) => MaskEditorScreen(imageFile: _pickedFile!),
                       ),
                     );
+                    if (result != null) {
+                      setState(() {
+                        _mask = result;
+                      });
+                    }
                   }
                 },
                 tooltip: 'Edit Mask',
               ),
               ElevatedButton(
                 onPressed: () => _uploadAndBlur('background'),
-                child: const Text('Blur BG'),
+                child: Text(_mask != null ? 'Blur Mask' : 'Blur BG'),
               ),
               ElevatedButton(
                 onPressed: () => _uploadAndBlur('faces'),
