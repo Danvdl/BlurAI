@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Env
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Models and Checkpoints
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+backend/checkpoints/
+checkpoints/
+
+# Logs and Databases
+*.log
+*.sqlite
+
+# BlurAI specific
+backend/uploads/
+backend/outputs/
+backend/temp_*/
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+
+# IDE
+.vscode/
+.idea/

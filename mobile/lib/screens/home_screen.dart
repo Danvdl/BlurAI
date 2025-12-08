@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:video_player/video_player.dart';
 import '../data/services/api_service.dart';
 import '../widgets/modern_widgets.dart';
 import '../core/theme.dart';
+import '../core/constants.dart';
+import '../core/logger.dart';
 import 'mask_editor_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -25,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   XFile? _pickedFile;
   String? _blurredImageUrl;
   Uint8List? _maskBytes;
+  VideoPlayerController? _videoController;
   
   bool _isLoading = false;
   bool _isVideo = false;
@@ -33,10 +37,19 @@ class _HomeScreenState extends State<HomeScreen> {
   String _blurShape = 'rect'; // 'rect', 'oval', 'trace'
   String _blurStyle = 'smooth'; // 'smooth', 'pixelate'
 
+  @override
+  void dispose() {
+    _videoController?.dispose();
+    super.dispose();
+  }
+
   Future<void> _pickImage() async {
+    AppLogger.info('Picking image from gallery');
     final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
 
     if (pickedFile != null) {
+      AppLogger.info('Image picked: ${pickedFile.path}');
+      _disposeVideoController();
       setState(() {
         _pickedFile = pickedFile;
         _image = kIsWeb ? null : File(pickedFile.path);
@@ -44,60 +57,137 @@ class _HomeScreenState extends State<HomeScreen> {
         _isVideo = false;
         _maskBytes = null;
       });
+    } else {
+      AppLogger.info('Image picking cancelled');
     }
   }
 
   Future<void> _pickVideo() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.video,
-      allowMultiple: false,
-      withData: true,
-    );
+    AppLogger.info('Picking video from gallery');
+    final pickedFile = await _picker.pickVideo(source: ImageSource.gallery);
 
-    if (result != null) {
+    if (pickedFile != null) {
+      AppLogger.info('Video picked: ${pickedFile.path}');
+      _disposeVideoController();
+      
       setState(() {
-        if (kIsWeb && result.files.single.bytes != null) {
-          _image = null;
-          _blurredImageUrl = null;
-          _isVideo = true;
-        } else if (result.files.single.path != null) {
-          _image = File(result.files.single.path!);
-          _blurredImageUrl = null;
-          _isVideo = true;
-        }
+        _pickedFile = pickedFile;
+        _image = kIsWeb ? null : File(pickedFile.path);
+        _blurredImageUrl = null;
+        _isVideo = true;
+        _maskBytes = null;
       });
+      
+      _initializeVideoController(pickedFile);
+    } else {
+      AppLogger.info('Video picking cancelled');
+    }
+  }
+
+  void _disposeVideoController() {
+    _videoController?.dispose();
+    _videoController = null;
+  }
+
+  Future<void> _initializeVideoController(XFile file) async {
+    VideoPlayerController controller;
+    if (kIsWeb) {
+      controller = VideoPlayerController.networkUrl(Uri.parse(file.path));
+    } else {
+      controller = VideoPlayerController.file(File(file.path));
+    }
+    
+    try {
+      await controller.initialize();
+      await controller.setLooping(true);
+      await controller.play();
+      if (mounted) {
+        setState(() {
+          _videoController = controller;
+        });
+      }
+    } catch (e) {
+      AppLogger.error('Error initializing video controller', e);
     }
   }
 
   Future<void> _handleBlur(String blurType) async {
-    if (_pickedFile == null && _image == null) return;
+    if (_pickedFile == null) return;
 
+    // For video, force SAM2 shape
+    final effectiveShape = _isVideo ? 'sam2' : _blurShape;
+
+    AppLogger.info('Starting blur process. Type: $blurType, IsVideo: $_isVideo');
     setState(() => _isLoading = true);
 
     try {
-      final bytes = await _apiService.uploadAndBlur(
-        pickedFile: _pickedFile,
-        imageFile: _image,
-        blurType: blurType,
-        maskBytes: _maskBytes,
-        blurStrength: _blurStrength.round(),
-        blurShape: _blurShape,
-        blurStyle: _blurStyle,
-      );
-
-      if (bytes != null) {
-        setState(() {
-          if (kIsWeb) {
-            _blurredImageUrl = Uri.dataFromBytes(bytes, mimeType: 'image/jpeg').toString();
-          } else {
-            final tempDir = Directory.systemTemp;
-            final file = File('${tempDir.path}/blurred_${DateTime.now().millisecondsSinceEpoch}.jpg');
-            file.writeAsBytesSync(bytes);
-            _image = file;
+      if (_isVideo) {
+        final response = await _apiService.uploadVideo(
+          videoFile: _pickedFile!,
+          blurType: blurType,
+          blurStrength: _blurStrength.round(),
+          blurShape: effectiveShape,
+          blurStyle: _blurStyle,
+        );
+        
+        final jobId = response['job_id'];
+        AppLogger.info('Video job started: $jobId');
+        
+        // Poll for status
+        bool isDone = false;
+        while (!isDone) {
+          await Future.delayed(const Duration(seconds: 5));
+          final status = await _apiService.checkVideoStatus(jobId);
+          
+          if (status['status'] == 'completed') {
+            isDone = true;
+            AppLogger.info('Video processing completed');
+            if (mounted) {
+               ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Video processed! Download at: ${AppConstants.baseUrl}${status['result_url']}'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 10),
+                  action: SnackBarAction(
+                    label: 'Copy URL',
+                    onPressed: () {
+                      // TODO: Copy to clipboard or open
+                    },
+                  ),
+                ),
+              );
+            }
+          } else if (status['status'] == 'failed') {
+            AppLogger.error('Video processing failed: ${status['error']}');
+            throw Exception(status['error']);
           }
-        });
+        }
+      } else {
+        final bytes = await _apiService.uploadAndBlur(
+          pickedFile: _pickedFile,
+          imageFile: _image,
+          blurType: blurType,
+          maskBytes: _maskBytes,
+          blurStrength: _blurStrength.round(),
+          blurShape: _blurShape,
+          blurStyle: _blurStyle,
+        );
+
+        if (bytes != null) {
+          setState(() {
+            if (kIsWeb) {
+              _blurredImageUrl = Uri.dataFromBytes(bytes, mimeType: 'image/jpeg').toString();
+            } else {
+              final tempDir = Directory.systemTemp;
+              final file = File('${tempDir.path}/blurred_${DateTime.now().millisecondsSinceEpoch}.jpg');
+              file.writeAsBytesSync(bytes);
+              _image = file;
+            }
+          });
+        }
       }
-    } catch (e) {
+    } catch (e, stack) {
+      AppLogger.error('Error in _handleBlur', e, stack);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -226,17 +316,25 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (_blurredImageUrl != null)
+              if (_isVideo)
+                if (_videoController != null && _videoController!.value.isInitialized)
+                  AspectRatio(
+                    aspectRatio: _videoController!.value.aspectRatio,
+                    child: VideoPlayer(_videoController!),
+                  )
+                else
+                  const Center(child: CircularProgressIndicator(color: Colors.white))
+              else if (_blurredImageUrl != null)
                 Image.network(_blurredImageUrl!, fit: BoxFit.contain)
               else if (kIsWeb && _pickedFile != null)
                 Image.network(_pickedFile!.path, fit: BoxFit.contain)
-              else if (_image != null)
+              else if (_image != null && !_isVideo)
                 Image.file(_image!, fit: BoxFit.contain)
               else
                 const SizedBox(),
                 
               // Mask Indicator Overlay
-              if (_maskBytes != null && _blurredImageUrl == null)
+              if (_maskBytes != null && _blurredImageUrl == null && !_isVideo)
                 Positioned(
                   top: 16,
                   right: 16,
@@ -293,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
             ],
           ),
-          if ((_pickedFile != null || _image != null) && !_isVideo) ...[
+          if (_pickedFile != null || _image != null) ...[
             const SizedBox(height: 20),
             // Blur Settings
             Column(
@@ -318,21 +416,26 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Text(
-                      "Shape: ",
-                      style: TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                    const SizedBox(width: 10),
-                    _buildShapeOption("Box", "rect"),
-                    const SizedBox(width: 10),
-                    _buildShapeOption("Oval", "oval"),
-                    const SizedBox(width: 10),
-                    _buildShapeOption("Trace", "trace"),
-                  ],
-                ),
-                const SizedBox(height: 8),
+                // Only show shape options for images, video uses SAM2 by default
+                if (!_isVideo) ...[
+                  Row(
+                    children: [
+                      const Text(
+                        "Shape: ",
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                      const SizedBox(width: 10),
+                      _buildShapeOption("Box", "rect"),
+                      const SizedBox(width: 10),
+                      _buildShapeOption("Oval", "oval"),
+                      const SizedBox(width: 10),
+                      _buildShapeOption("Trace", "trace"),
+                      const SizedBox(width: 10),
+                      _buildShapeOption("AI (SAM2)", "sam2"),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 Row(
                   children: [
                     const Text(
